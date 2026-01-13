@@ -12,6 +12,7 @@ Included:
 Behavior:
 - Tools limited to Physical Examination, Laboratory Tests, Imaging, ECG, and Echocardiogram.
 - Output is a single final diagnosis string (no treatments or extra text).
+- Writes per-run outputs and a structured JSONL event log for debugging.
 
 ## Quickstart
 
@@ -46,3 +47,17 @@ You will need (at least):
 - `tqdm`
 
 Install your preferred versions according to your environment.
+
+## Outputs
+
+Each run writes to `outputs_plain/<run_name>/` by default:
+- `<run_name>_results.json` (final predictions)
+- `events.jsonl` (structured planner/worker/solver logs)
+
+Disable structured logging with `--disable-event-log` or rename it with `--event-log-name`.
+
+## Tests
+
+```bash
+python -m unittest tests.rewoo_agent_test
+```
