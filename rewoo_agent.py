@@ -166,6 +166,36 @@ def _split_csv(arg: str) -> List[str]:
     return [p.strip() for p in re.split(r",\s*(?![^()]*\))|\n", str(arg or "")) if p.strip()]
 
 
+_TOOL_ALIASES = {
+    "physical exam": "Physical Examination",
+    "physical examination": "Physical Examination",
+    "pe": "Physical Examination",
+    "lab tests": "Laboratory Tests",
+    "labs": "Laboratory Tests",
+    "laboratory tests": "Laboratory Tests",
+    "imaging": "Imaging",
+    "ecg": "ECG",
+    "ekg": "ECG",
+    "echocardiogram": "Echocardiogram",
+    "echo": "Echocardiogram",
+}
+
+
+def _normalize_tool_name(raw: str) -> str:
+    name = str(raw or "").strip()
+    if not name:
+        return name
+    key = name.lower()
+    return _TOOL_ALIASES.get(key, name)
+
+
+def _render_tool_call(raw_tool_call: str, resolved_input: Optional[str]) -> str:
+    tool_name, arg = _extract_tool_and_input(raw_tool_call)
+    if resolved_input is not None:
+        return f"{tool_name}[{resolved_input}]"
+    return raw_tool_call
+
+
 # ----------------------------- Agent -----------------------------
 
 @dataclass
@@ -212,7 +242,8 @@ class ReWOOAgent:
         self._already_requested_scans = {}
 
         plan_res = self._plan(patient_history)
-        _, worker_log = self._execute(plan_res.assignments)
+        evidences, resolved_inputs = self._execute(plan_res.assignments)
+        worker_log = self._build_worker_log(plan_res.plans, plan_res.assignments, evidences, resolved_inputs)
         final_diag = self._solve(patient_history, worker_log)
 
         return {
@@ -254,22 +285,24 @@ class ReWOOAgent:
         except Exception:
             pass
         for line in s.splitlines():
-            s = line.strip()
-            if not s:
+            line = line.strip()
+            if not line:
                 continue
-            if s.lower().startswith('plan:'):
-                plans.append(s)
+            m_plan = re.match(r'^plan\s*[:\-]\s*(.*)$', line, flags=re.I)
+            if m_plan:
+                plan_body = m_plan.group(1).strip()
+                plans.append(f"Plan: {plan_body}" if plan_body else "Plan:")
                 continue
-            m = re.match(r'^#E(\d+)\s*=\s*(.+)$', s)
+            m = re.match(r'^#\s*e(\d+)\s*[:=]\s*(.+)$', line, flags=re.I)
             if m:
                 eid = f"#E{m.group(1)}"
                 tool_call = m.group(2).strip()
                 assigns.append((eid, tool_call))
         return plans, assigns
 
-    def _execute(self, assignments: List[Tuple[str, str]]) -> Tuple[Dict[str, str], str]:
+    def _execute(self, assignments: List[Tuple[str, str]]) -> Tuple[Dict[str, str], Dict[str, str]]:
         evidences: Dict[str, str] = {}
-        logs: List[str] = []
+        resolved_inputs: Dict[str, str] = {}
         for eid, tool_call in assignments:
             tool_name, arg = _extract_tool_and_input(tool_call)
             arg_text = str(arg or '')
@@ -279,13 +312,38 @@ class ReWOOAgent:
 
             evidence = self._run_tool(tool_name, arg_text)
             evidences[eid] = evidence
-            logs.append(f"{eid} = {tool_name}[{arg if arg is not None else ''}]\n{evidence}\n")
-        worker_log = "\n".join(logs).strip()
-        return evidences, worker_log
+            if arg is not None:
+                resolved_inputs[eid] = arg_text
+        return evidences, resolved_inputs
+
+    def _build_worker_log(
+        self,
+        plans: List[str],
+        assignments: List[Tuple[str, str]],
+        evidences: Dict[str, str],
+        resolved_inputs: Dict[str, str],
+    ) -> str:
+        tool_calls = {eid: tool_call for eid, tool_call in assignments}
+        lines: List[str] = []
+        if not plans:
+            for eid, tool_call in assignments:
+                lines.append("Plan: (no plan provided)")
+                lines.append(f"{eid} = {_render_tool_call(tool_call, resolved_inputs.get(eid))}")
+                lines.append("Evidence:")
+                lines.append(str(evidences.get(eid, "No evidence found")).strip())
+            return "\n".join(lines).strip()
+        for idx, plan in enumerate(plans, 1):
+            eid = f"#E{idx}"
+            lines.append(plan)
+            if eid in tool_calls:
+                lines.append(f"{eid} = {_render_tool_call(tool_calls[eid], resolved_inputs.get(eid))}")
+            lines.append("Evidence:")
+            lines.append(str(evidences.get(eid, "No evidence found")).strip())
+        return "\n".join(lines).strip()
 
     def _run_tool(self, tool_name: str, arg_text: str) -> str:
-        name = str(tool_name or '').strip()
-        if name.lower().startswith('physical examination'):
+        name = _normalize_tool_name(tool_name)
+        if name == 'Physical Examination':
             obs = physical_examination(self.patient)
             try:
                 update_patient_observation('Physical Examination', None, obs)
@@ -293,7 +351,7 @@ class ReWOOAgent:
                 pass
             return obs
 
-        if name.lower().startswith('laboratory tests'):
+        if name == 'Laboratory Tests':
             tests = _split_csv(arg_text)
             ai: List[Union[int, str]]
             if self.lab_test_mapping_df is not None:
@@ -318,7 +376,7 @@ class ReWOOAgent:
                 pass
             return obs
 
-        if name.lower().startswith('imaging'):
+        if name == 'Imaging':
             kv = _parse_keyvals(arg_text)
             try:
                 if kv and ('region' in kv or 'modality' in kv):
@@ -339,7 +397,7 @@ class ReWOOAgent:
                 pass
             return obs
 
-        if name.lower().startswith('ecg'):
+        if name == 'ECG':
             obs = ecg(self.patient)
             try:
                 update_patient_observation('ECG', None, obs)
@@ -347,7 +405,7 @@ class ReWOOAgent:
                 pass
             return obs
 
-        if name.lower().startswith('echocardiogram'):
+        if name == 'Echocardiogram':
             obs = echocardiogram(self.patient)
             try:
                 update_patient_observation('Echocardiogram', None, obs)
