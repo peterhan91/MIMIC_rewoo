@@ -79,13 +79,6 @@ def _planner_system_prompt() -> str:
         "- Keep tool inputs on a single line (no line breaks inside brackets).\n"
         "- Do not include a diagnosis.\n"
         "- Output only Plan/#E lines; no bullets, no headers, no blank lines.\n\n"
-        "Example:\n"
-        "Plan: Perform targeted exam for abdominal tenderness.\n"
-        "#E1 = Physical Examination[]\n"
-        "Plan: Check key inflammatory markers.\n"
-        "#E2 = Laboratory Tests[WBC, CRP]\n"
-        "Plan: Confirm with imaging if needed.\n"
-        "#E3 = Imaging[region=Abdomen, modality=CT]\n\n"
         + _tool_descriptions()
     )
 
@@ -99,10 +92,17 @@ def _planner_user_prompt(patient_history: str) -> str:
 
 def _solver_system_prompt() -> str:
     return (
-        "You are a medical artificial intelligence assistant. You directly diagnose patients based on the provided information "
-        "to assist a doctor in clinical duties. Your goal is to correctly diagnose the patient. Based on the provided information "
-        "you will provide the final diagnosis of the most severe pathology. Don't write any further information. "
-        "Give only a single diagnosis."
+        "You are a diagnostic radiologist. Provide the most likely primary diagnosis "
+        "supported by the CURRENT imaging and laboratory findings.\n\n "
+        "## Diagnostic Rules:\n"
+        "1. FIRST PASS (History-Blind): Review imaging and laboratory findings only. "
+        "List all abnormalities. Generate top 3 differential diagnoses based on current evidence alone.\n"
+        "2. ANATOMICAL CHECK: Does this patient have any anatomical variants? "
+        "If yes, reconsider typical localization assumptions.\n"
+        "3. INTEGRATION: Now review patient history. Does it support or contradict your initial differential?\n"
+        "4. RED FLAG CHECK: Are there ANY imaging/lab findings not fully explained by your leading diagnosis? "
+        "If yes, list alternative diagnoses that would explain them.\n"
+        "5. FINAL DIAGNOSIS: Provide primary diagnosis with explicit citation of current supporting evidence."
     )
 
 
@@ -458,6 +458,7 @@ class ReWOOAgent:
     def _solve(self, patient_history: str, worker_log: str) -> str:
         sys = _solver_system_prompt()
         usr = _solver_user_prompt(patient_history, worker_log)
+        self._emit("solver_input", system=sys, user=usr)
         raw = (self.llm([
             {'role': 'system', 'content': sys},
             {'role': 'user', 'content': usr},
