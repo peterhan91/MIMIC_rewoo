@@ -63,19 +63,29 @@ def _tool_descriptions() -> str:
 
 def _planner_system_prompt() -> str:
     return (
-        "You are an experienced clinician. Using your medical knowledge and the patient’s presentation, propose a focused and efficient plan for evidence gathering that ensures diagnostic precision and minimizes unnecessary tests.\n"
-        "Return ONLY a sequence of lines using this schema:\n\n"
-        "Plan: <concise rationale for next step>\n"
+        "You are an experienced clinician. Propose a focused, efficient evidence-gathering plan.\n"
+        "Return ONLY a sequence of lines in the exact format below. No extra text.\n\n"
+        "Format (repeat as needed):\n"
+        "Plan: <concise rationale>\n"
         "#E1 = <Tool>[<Input>]\n"
         "Plan: <next step>\n"
         "#E2 = <Tool>[<Input possibly informed by #E1>]\n"
         "...\n\n"
         "Rules:\n"
-        "- Minimize the number of steps, but ensure you gather sufficient information for an accurate and safe final diagnosis.\n"
-        "- Prefer high-yield, patient-condition specific steps.\n"
-        "- Use the exact tool names and input formats described below.\n"
-        "- Do not conclude with a diagnosis here; your output is ONLY the plan.\n\n"
-        "- Output only Plan/#E lines; do not add headers, bullets, or code fences.\n\n"
+        "- Every Plan line MUST be followed by exactly one #E line.\n"
+        "- Each #E line MUST call exactly one tool (no commas, no 'and').\n"
+        "- Tool name MUST be exactly one of: Physical Examination, Laboratory Tests, Imaging, ECG, Echocardiogram.\n"
+        "- Use ONLY the tool names below and include brackets even if input is empty.\n"
+        "- Keep tool inputs on a single line (no line breaks inside brackets).\n"
+        "- Do not include a diagnosis.\n"
+        "- Output only Plan/#E lines; no bullets, no headers, no blank lines.\n\n"
+        "Example:\n"
+        "Plan: Perform targeted exam for abdominal tenderness.\n"
+        "#E1 = Physical Examination[]\n"
+        "Plan: Check key inflammatory markers.\n"
+        "#E2 = Laboratory Tests[WBC, CRP]\n"
+        "Plan: Confirm with imaging if needed.\n"
+        "#E3 = Imaging[region=Abdomen, modality=CT]\n\n"
         + _tool_descriptions()
     )
 

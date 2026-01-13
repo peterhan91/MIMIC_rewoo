@@ -1,7 +1,7 @@
 # MIMIC_rewoo (ReWOO-only runner)
 
 This folder contains the minimal files needed to run the ReWOO agent for diagnosis using MIMIC-III/IV HADM pickles.
-Only Llama-based Hugging Face chat models are supported.
+Hugging Face chat models with `apply_chat_template()` support are supported (e.g., Llama, Qwen3, LFM2.5).
 
 Included:
 - `run.py` (ReWOO-only)
@@ -34,6 +34,16 @@ python run.py \
   --lab-map-pkl lab_test_mapping_III.pkl \
   --ref-ranges-json itemid_ref_ranges_III.json \
   --hf-model-id meta-llama/Meta-Llama-3.1-8B-Instruct
+```
+
+Debug model (Qwen3; requires `transformers>=4.51.0`):
+
+```bash
+python run.py \
+  --hadm-pkl data/CDM_IV/appendicitis_hadm_info_first_diag.pkl \
+  --lab-map-pkl lab_test_mapping_IV.pkl \
+  --ref-ranges-json itemid_ref_ranges_IV.json \
+  --hf-model-id Qwen/Qwen3-4B-Instruct-2507
 ```
 
 ## Dependencies

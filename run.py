@@ -339,7 +339,7 @@ def main():
     p.add_argument("--event-log-name", default="events.jsonl", help="Structured event log filename (JSONL)")
     # New optimization knobs
     p.add_argument("--disable-static-kv", action="store_true", help="Disable static kv-cache optimization (default: enabled)")
-    p.add_argument("--attn-impl", default="flash_attention_2", help="Attention implementation preference for model (e.g., 'flash_attention_2', 'eager', or 'auto')")
+    p.add_argument("--attn-impl", default="auto", help="Attention implementation preference for model (e.g., 'flash_attention_2', 'eager', or 'auto')")
     p.add_argument("--prompt-lookup-n", type=int, default=0, help="Enable prompt lookup decoding with N overlap tokens (0 disables)")
     # GH200 / RAPIDS RMM unified memory (optional)
     p.add_argument("--enable-rmm", action="store_true", help="Use RAPIDS RMM as PyTorch CUDA allocator (GH200 unified memory)")
