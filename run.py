@@ -42,6 +42,29 @@ torch.backends.cudnn.deterministic = False
 log = logging.getLogger(__name__)
 
 
+class JsonlLogger:
+    def __init__(self, path: str, context: Optional[Dict[str, Any]] = None) -> None:
+        self.path = path
+        self.context = dict(context or {})
+        self._fh = open(path, "a", encoding="utf-8")
+
+    def log(self, event: str, **fields: Any) -> None:
+        payload = {
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "event": str(event),
+        }
+        payload.update(self.context)
+        payload.update(fields)
+        self._fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self._fh.flush()
+
+    def close(self) -> None:
+        try:
+            self._fh.close()
+        except Exception:
+            pass
+
+
 def _to_torch_dtype(name: Optional[str]):
     if not name:
         return None
@@ -94,7 +117,6 @@ def _llm_hf_chat(
     device_map: str = "balanced",
     max_new_tokens: int = 256,
     quant: str = "none",  # one of: none, 8bit, 4bit
-    enable_compile: bool = True,
     enable_static_kv: bool = True,
     attn_implementation: Optional[str] = None,  # e.g., "flash_attention_2", "eager"
     prompt_lookup_num_tokens: Optional[int] = None,
@@ -156,33 +178,6 @@ def _llm_hf_chat(
     if enable_static_kv:
         try:
             model.generation_config.cache_implementation = "static"
-        except Exception:
-            pass
-
-    # Compile: prefer compiling forward with static kv; else whole-model compile
-    if enable_compile and hasattr(torch, "compile"):
-        # Allow graph breaks and dynamic shapes; fall back to eager on errors
-        try:
-            import torch._dynamo as dynamo  # type: ignore
-            dynamo.config.suppress_errors = True
-        except Exception:
-            pass
-        try:
-            kw = dict(mode="reduce-overhead", fullgraph=False, dynamic=True)
-            if enable_static_kv:
-                model.forward = torch.compile(model.forward, **kw)  # type: ignore[assignment]
-            else:
-                model = torch.compile(model, **kw)  # type: ignore[assignment]
-        except TypeError:
-            # Older PyTorch: retry without dynamic=
-            try:
-                kw = dict(mode="reduce-overhead", fullgraph=False)
-                if enable_static_kv:
-                    model.forward = torch.compile(model.forward, **kw)  # type: ignore[assignment]
-                else:
-                    model = torch.compile(model, **kw)  # type: ignore[assignment]
-            except Exception:
-                pass
         except Exception:
             pass
 
@@ -340,7 +335,8 @@ def main():
     p.add_argument("--sample-seed", type=int, default=42, help="Seed for sampling patients when --max-patients is set (deterministic subset)")
     p.add_argument("--debug", action="store_true", help="Enable verbose debug output")
     p.add_argument("--debug-print-llm", action="store_true", help="Print raw assistant output each step")
-    p.add_argument("--disable-torch-compile", action="store_true", help="Disable torch.compile wrapping (default: enabled)")
+    p.add_argument("--disable-event-log", action="store_true", help="Disable JSONL structured event logging")
+    p.add_argument("--event-log-name", default="events.jsonl", help="Structured event log filename (JSONL)")
     # New optimization knobs
     p.add_argument("--disable-static-kv", action="store_true", help="Disable static kv-cache optimization (default: enabled)")
     p.add_argument("--attn-impl", default="flash_attention_2", help="Attention implementation preference for model (e.g., 'flash_attention_2', 'eager', or 'auto')")
@@ -379,7 +375,6 @@ def main():
     # Prepare HF transformers LLM callable
     requested_dtype = args.hf_dtype
 
-    enable_compile = not args.disable_torch_compile
     enable_static_kv = not args.disable_static_kv
     attn_impl = None if str(args.attn_impl or "").lower() in {"", "auto"} else str(args.attn_impl)
     prompt_lookup_n = int(args.prompt_lookup_n) if int(args.prompt_lookup_n or 0) > 0 else None
@@ -390,7 +385,6 @@ def main():
         device_map=args.hf_device_map,
         max_new_tokens=args.max_new_tokens,
         quant=args.quant,
-        enable_compile=enable_compile,
         enable_static_kv=enable_static_kv,
         attn_implementation=attn_impl,
         prompt_lookup_num_tokens=prompt_lookup_n,
@@ -419,6 +413,26 @@ def main():
     os.makedirs(run_dir, exist_ok=True)
 
     results_json = join(run_dir, f"{run_name}_results.json")
+    event_logger: Optional[JsonlLogger] = None
+    if not args.disable_event_log:
+        event_log_path = join(run_dir, str(args.event_log_name))
+        event_logger = JsonlLogger(
+            event_log_path,
+            context={
+                "run_name": run_name,
+                "model_id": args.hf_model_id,
+                "quant": quant_tag,
+            },
+        )
+        event_logger.log(
+            "run_start",
+            hadm_pkl=args.hadm_pkl,
+            lab_map_pkl=args.lab_map_pkl,
+            ref_ranges_json=args.ref_ranges_json,
+            logdir=args.logdir,
+            max_patients=args.max_patients,
+            first_patient=args.first_patient,
+        )
 
     # Debug options
     debug_print_llm = bool(args.debug or args.debug_print_llm)
@@ -433,6 +447,7 @@ def main():
         calculator_critical_pct=args.calculator_critical_pct,
         calculator_include_units=args.calculator_include_units,
         debug_print_llm=debug_print_llm,
+        event_logger=event_logger.log if event_logger else None,
     )
 
     results: Dict[str, Any] = {}
@@ -491,6 +506,9 @@ def main():
         json.dump(results, f, ensure_ascii=False, indent=2)
     log(f"Completed processing {len(results)} patients")
     log(f"Final results saved to {results_json}")
+    if event_logger:
+        event_logger.log("run_end", total_patients=len(results), results_json=results_json)
+        event_logger.close()
 
 
 if __name__ == "__main__":

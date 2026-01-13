@@ -218,6 +218,7 @@ class ReWOOAgent:
         calculator_critical_pct: float = 30.0,
         calculator_include_units: bool = True,
         debug_print_llm: bool = False,
+        event_logger=None,
     ):
         self.llm = llm
         self.lab_test_mapping_df = lab_test_mapping_df
@@ -229,6 +230,18 @@ class ReWOOAgent:
         self.calculator_include_units = calculator_include_units
         self.debug_print_llm = bool(debug_print_llm)
         self._already_requested_scans: Dict[str, int] = {}
+        self._case_id: Optional[Union[str, int]] = None
+        self.event_logger = event_logger
+
+    def _emit(self, event: str, **fields: Any) -> None:
+        if not self.event_logger:
+            return
+        if self._case_id is not None:
+            fields.setdefault("patient_id", str(self._case_id))
+        try:
+            self.event_logger(event, **fields)
+        except Exception:
+            pass
 
     def run_case(
         self,
@@ -240,11 +253,14 @@ class ReWOOAgent:
         set_patient_history((patient_history or '').strip())
         self.patient = patient
         self._already_requested_scans = {}
+        self._case_id = patient_id
+        self._emit("case_start", patient_history=patient_history or "")
 
         plan_res = self._plan(patient_history)
         evidences, resolved_inputs = self._execute(plan_res.assignments)
         worker_log = self._build_worker_log(plan_res.plans, plan_res.assignments, evidences, resolved_inputs)
         final_diag = self._solve(patient_history, worker_log)
+        self._emit("case_end", final_diagnosis=final_diag)
 
         return {
             'planner': plan_res.raw,
@@ -259,6 +275,7 @@ class ReWOOAgent:
             {'role': 'system', 'content': sys},
             {'role': 'user', 'content': usr},
         ], stop=[]) or '').strip()
+        self._emit("planner_raw", text=raw)
         if self.debug_print_llm:
             try:
                 thk, fin = _split_hermes_think(raw)
@@ -266,6 +283,7 @@ class ReWOOAgent:
             except Exception:
                 pass
         plans, assignments = self._parse_planner_output(raw)
+        self._emit("planner_parsed", plans=plans, assignments=assignments)
         return PlanResult(raw=raw, plans=plans, assignments=assignments)
 
     def _parse_planner_output(self, text: str) -> Tuple[List[str], List[Tuple[str, str]]]:
@@ -314,6 +332,14 @@ class ReWOOAgent:
             evidences[eid] = evidence
             if arg is not None:
                 resolved_inputs[eid] = arg_text
+            self._emit(
+                "tool_call",
+                eid=eid,
+                tool=_normalize_tool_name(tool_name),
+                raw_input=arg if arg is not None else "",
+                resolved_input=arg_text,
+                evidence=evidence,
+            )
         return evidences, resolved_inputs
 
     def _build_worker_log(
@@ -331,7 +357,9 @@ class ReWOOAgent:
                 lines.append(f"{eid} = {_render_tool_call(tool_call, resolved_inputs.get(eid))}")
                 lines.append("Evidence:")
                 lines.append(str(evidences.get(eid, "No evidence found")).strip())
-            return "\n".join(lines).strip()
+            worker_log = "\n".join(lines).strip()
+            self._emit("worker_log", text=worker_log)
+            return worker_log
         for idx, plan in enumerate(plans, 1):
             eid = f"#E{idx}"
             lines.append(plan)
@@ -339,7 +367,9 @@ class ReWOOAgent:
                 lines.append(f"{eid} = {_render_tool_call(tool_calls[eid], resolved_inputs.get(eid))}")
             lines.append("Evidence:")
             lines.append(str(evidences.get(eid, "No evidence found")).strip())
-        return "\n".join(lines).strip()
+        worker_log = "\n".join(lines).strip()
+        self._emit("worker_log", text=worker_log)
+        return worker_log
 
     def _run_tool(self, tool_name: str, arg_text: str) -> str:
         name = _normalize_tool_name(tool_name)
@@ -422,4 +452,7 @@ class ReWOOAgent:
             {'role': 'system', 'content': sys},
             {'role': 'user', 'content': usr},
         ], stop=[]) or '').strip()
-        return _normalize_final_diagnosis(raw)
+        final = _normalize_final_diagnosis(raw)
+        self._emit("solver_raw", text=raw)
+        self._emit("solver_output", final_diagnosis=final)
+        return final
