@@ -1,13 +1,17 @@
-# MIMIC_simple (ReWOO-only runner)
+# MIMIC_rewoo (ReWOO-only runner)
 
 This folder contains the minimal files needed to run the ReWOO agent for diagnosis using MIMIC-III/IV HADM pickles.
+Only Llama-based Hugging Face chat models are supported.
 
 Included:
-- `run.py` (use `--agent-type rewoo`)
-- `rewoo_agent.py`, `react_agent.py`, `tools.py`
+- `run.py` (ReWOO-only)
+- `rewoo_agent.py`, `rewoo_helpers.py`, `tools.py`
 - Lab mappings and reference ranges
 - Sample HADM pickles under `data/`
-- `icd_procedures_index.json` for procedure recommendation lookup
+
+Behavior:
+- Tools limited to Physical Examination, Laboratory Tests, Imaging, ECG, and Echocardiogram.
+- Output is a single final diagnosis string (no treatments or extra text).
 
 ## Quickstart
 
@@ -15,7 +19,6 @@ MIMIC-IV example:
 
 ```bash
 python run.py \
-  --agent-type rewoo \
   --hadm-pkl data/CDM_IV/appendicitis_hadm_info_first_diag.pkl \
   --lab-map-pkl lab_test_mapping_IV.pkl \
   --ref-ranges-json itemid_ref_ranges_IV.json \
@@ -26,7 +29,6 @@ MIMIC-III example:
 
 ```bash
 python run.py \
-  --agent-type rewoo \
   --hadm-pkl data/CDM_III/myocardial_infarction_hadm_info_first_diag.pkl \
   --lab-map-pkl lab_test_mapping_III.pkl \
   --ref-ranges-json itemid_ref_ranges_III.json \
